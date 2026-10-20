@@ -15,16 +15,20 @@ hassio_api: true
 hassio_role: manager
 services:
   - mqtt:need
-# The Let's Encrypt certificate lives in /ssl.
+# /share: the add-on drops an NGINX location snippet there for the NGINX SSL
+# proxy add-on (customize.default = nginx_proxy_default*.conf). /ssl: only
+# used when ssl is on and the add-on serves HTTPS itself on a published port.
 map:
+  - share:rw
   - ssl:ro
 ports:
-  8087/tcp: 8087
+  8087/tcp: null
 ports_description:
-  8087/tcp: MCP endpoint (HTTPS when ssl is on)
+  8087/tcp: Direct MCP endpoint. Leave unpublished when going through the NGINX proxy
 options:
   secret: ""
-  ssl: true
+  nginx_include: true
+  ssl: false
   certfile: fullchain.pem
   keyfile: privkey.pem
   public_host: mqtt.faikin.au
@@ -37,6 +41,7 @@ options:
   payload_limit: 2000
 schema:
   secret: str?
+  nginx_include: bool?
   ssl: bool
   certfile: str
   keyfile: str

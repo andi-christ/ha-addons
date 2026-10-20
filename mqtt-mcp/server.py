@@ -5,8 +5,10 @@ the Mosquitto broker that runs as a Home Assistant add-on.
 Runs as a Home Assistant add-on. The broker host and login come from the
 Supervisor's mqtt service (what the Mosquitto add-on publishes for other
 add-ons) unless mqtt_host is set in the add-on options. The MCP endpoint is
-Streamable HTTP at https://<public_host>:8087/<secret>/mcp; the secret path is
-the only access control, so treat the URL like a password.
+Streamable HTTP at /<secret>/mcp, reached through the NGINX SSL proxy add-on
+(https://<public_host>/<secret>/mcp) by way of a location snippet this add-on
+writes to /share. The secret path is the only access control, so treat the
+URL like a password.
 
 Tools:
   watch            live traffic on a topic filter for a window
@@ -29,6 +31,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 import urllib.error
@@ -501,11 +504,49 @@ async def broker_info() -> dict:
 # --------------------------------------------------------------------------
 
 
+NGINX_SNIPPET = Path("/share/nginx_proxy_default_mqtt_mcp.conf")
+
+
+def write_nginx_snippet(secret: str) -> None:
+    """Drop a location block for the NGINX SSL proxy add-on into /share.
+
+    The proxy add-on includes /share/nginx_proxy_default*.conf inside its HTTPS
+    server block when customize.active is on. The upstream is resolved at
+    request time (Docker's embedded DNS) so NGINX still starts if this add-on
+    is down. The proxy has to be restarted after the file changes.
+    """
+    host = socket.gethostname()
+    body = f"""# Written by the mqtt-mcp add-on at start. Do not edit; set the add-on options.
+location /{secret}/ {{
+    resolver 127.0.0.11 valid=30s ipv6=off;
+    set $mqtt_mcp_upstream http://{host}:{PORT};
+    proxy_pass $mqtt_mcp_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+}}
+"""
+    try:
+        if NGINX_SNIPPET.exists() and NGINX_SNIPPET.read_text() == body:
+            log(f"nginx snippet {NGINX_SNIPPET} unchanged")
+            return
+        NGINX_SNIPPET.write_text(body)
+        log(f"wrote nginx snippet {NGINX_SNIPPET} (upstream {host}:{PORT}); restart the NGINX SSL proxy add-on to pick it up")
+    except OSError as e:
+        log(f"could not write {NGINX_SNIPPET}: {e}")
+
+
 def main() -> None:
     secret = load_secret()
     path = f"/{secret}/mcp"
     public_host = (OPTIONS.get("public_host") or "").strip() or "<this host>"
-    use_ssl = bool(OPTIONS.get("ssl", True))
+    use_ssl = bool(OPTIONS.get("ssl", False))
+    nginx_include = bool(OPTIONS.get("nginx_include", True))
 
     uvicorn_config: dict[str, Any] = {}
     scheme = "http"
@@ -523,7 +564,11 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         log(f"could not read broker settings yet: {e}")
 
-    log(f"MCP endpoint: {scheme}://{public_host}:{PORT}{path}")
+    if nginx_include:
+        write_nginx_snippet(secret)
+        log(f"MCP endpoint via the NGINX proxy: https://{public_host}{path}")
+    else:
+        log(f"MCP endpoint: {scheme}://{public_host}:{PORT}{path}")
     log("Treat that URL as a password. Rotate it by setting a new secret in the add-on options.")
 
     asyncio.run(
