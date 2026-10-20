@@ -507,30 +507,59 @@ async def broker_info() -> dict:
 NGINX_SNIPPET = Path("/share/nginx_proxy_default_mqtt_mcp.conf")
 
 
-def write_nginx_snippet(secret: str) -> None:
-    """Drop a location block for the NGINX SSL proxy add-on into /share.
+_SECRET_RE = re.compile(r"^[A-Za-z0-9_-]{16,128}$")
+
+
+def shared_secrets() -> list[tuple[str, str]]:
+    """(name, secret) pairs from the shared_secrets option, validated.
+
+    Each one becomes its own URL on the NGINX side, so a person's access can be
+    revoked by removing their entry without touching anyone else's URL.
+    """
+    out: list[tuple[str, str]] = []
+    for item in OPTIONS.get("shared_secrets") or []:
+        name = str(item.get("name") or "").strip()
+        value = str(item.get("secret") or "").strip()
+        if not name or not value:
+            log(f"shared_secrets: skipping entry with an empty name or secret: {item.get('name')!r}")
+            continue
+        if not _SECRET_RE.match(value):
+            log(f"shared_secrets: skipping {name!r}: secret must be 16 to 128 URL-safe characters")
+            continue
+        out.append((name, value))
+    return out
+
+
+def write_nginx_snippet(secrets_by_name: list[tuple[str, str]]) -> None:
+    """Drop location blocks for the NGINX SSL proxy add-on into /share.
 
     The proxy add-on includes /share/nginx_proxy_default*.conf inside its HTTPS
-    server block when customize.active is on. The upstream is resolved at
-    request time (Docker's embedded DNS) so NGINX still starts if this add-on
+    server block when customize.active is on. One exact-match location per
+    secret, all forwarded to this add-on's single /mcp endpoint, so NGINX does
+    the gating and the server never sees the secret. The upstream is resolved
+    at request time (Docker's embedded DNS) so NGINX still starts if this add-on
     is down. The proxy has to be restarted after the file changes.
     """
     host = socket.gethostname()
-    body = f"""# Written by the mqtt-mcp add-on at start. Do not edit; set the add-on options.
-location /{secret}/ {{
+    blocks = []
+    for name, value in secrets_by_name:
+        blocks.append(f"""# {name}
+location = /{value}/mcp {{
     resolver 127.0.0.11 valid=30s ipv6=off;
     set $mqtt_mcp_upstream http://{host}:{PORT};
-    proxy_pass $mqtt_mcp_upstream;
+    proxy_pass $mqtt_mcp_upstream/mcp;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-MCP-Client "{name}";
     proxy_buffering off;
     proxy_cache off;
     proxy_read_timeout 600s;
     proxy_send_timeout 600s;
 }}
-"""
+""")
+    body = "# Written by the mqtt-mcp add-on at start. Do not edit; set the add-on options.\n" + "\n".join(blocks)
     try:
         if NGINX_SNIPPET.exists() and NGINX_SNIPPET.read_text() == body:
             log(f"nginx snippet {NGINX_SNIPPET} unchanged")
@@ -564,12 +593,20 @@ def main() -> None:
     except Exception as e:  # noqa: BLE001
         log(f"could not read broker settings yet: {e}")
 
+    shared = shared_secrets()
     if nginx_include:
-        write_nginx_snippet(secret)
-        log(f"MCP endpoint via the NGINX proxy: https://{public_host}{path}")
+        # NGINX checks the secret; the server itself only answers on /mcp,
+        # which is not published outside the add-on network.
+        path = "/mcp"
+        write_nginx_snippet([("owner", secret)] + shared)
+        log(f"MCP endpoint via the NGINX proxy (owner): https://{public_host}/{secret}/mcp")
+        for name, value in shared:
+            log(f"MCP endpoint via the NGINX proxy ({name}): https://{public_host}/{value}/mcp")
     else:
         log(f"MCP endpoint: {scheme}://{public_host}:{PORT}{path}")
-    log("Treat that URL as a password. Rotate it by setting a new secret in the add-on options.")
+        if shared:
+            log("shared_secrets only take effect with nginx_include on; ignored in direct mode")
+    log("Treat each URL as a password. Rotate one by changing its secret in the add-on options and restarting the NGINX SSL proxy add-on.")
 
     asyncio.run(
         mcp.run_http_async(

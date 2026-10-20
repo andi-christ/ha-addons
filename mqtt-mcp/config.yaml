@@ -1,5 +1,5 @@
 name: MQTT MCP
-version: "1.0.0"
+version: "1.1.0"
 slug: mqtt_mcp
 description: MCP server for watching, publishing and inspecting the Mosquitto broker from Claude
 url: https://github.com/andi-christ/ha-addons/tree/main/mqtt-mcp
@@ -29,6 +29,7 @@ ports_description:
   8087/tcp: Direct MCP endpoint. Leave unpublished when going through the NGINX proxy
 options:
   secret: ""
+  shared_secrets: []
   nginx_include: true
   ssl: false
   certfile: fullchain.pem
@@ -43,6 +44,9 @@ options:
   payload_limit: 2000
 schema:
   secret: str?
+  shared_secrets:
+    - name: str
+      secret: password
   nginx_include: bool?
   ssl: bool
   certfile: str

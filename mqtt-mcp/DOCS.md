@@ -21,7 +21,10 @@ proxies to the add-on. For the proxy to include it:
    whenever the secret changes.
 
 The connector URL is then `https://<public_host>/<secret>/mcp`, on port 443 with
-the proxy's certificate. No new firewall port is needed.
+the proxy's certificate. No new firewall port is needed. Each entry in
+`shared_secrets` gets the same shape of URL with its own secret; the add-on log
+lists them by name at start. Behind NGINX the server itself answers only on
+`/mcp`, which is not reachable from outside.
 
 The alternative is `nginx_include: false`, `ssl: true` and a published port
 8087: the add-on then serves HTTPS itself from the certificate in `/ssl`
@@ -31,7 +34,8 @@ The alternative is `nginx_include: false`, `ssl: true` and a published port
 
 | Option | Default | Meaning |
 |---|---|---|
-| `secret` | empty | The URL path segment that protects the endpoint. Leave empty to have one generated and stored in the add-on's data; set a new value to rotate it |
+| `secret` | empty | Your own URL path segment. Leave empty to have one generated and stored in the add-on's data; set a new value to rotate it |
+| `shared_secrets` | `[]` | Extra URLs for other people, as `name` and `secret` pairs (16 to 128 URL-safe characters). Each gets its own `/<secret>/mcp`; remove an entry to revoke that person. NGINX mode only |
 | `nginx_include` | true | Write the location snippet to `/share` for the NGINX SSL proxy add-on |
 | `ssl` | false | Serve HTTPS directly using the certificate in `/ssl` |
 | `certfile`, `keyfile` | `fullchain.pem`, `privkey.pem` | Files in `/ssl`, for `ssl: true` |
@@ -48,8 +52,17 @@ from its log. In Claude, Settings > Connectors > Add custom connector, paste tha
 URL, leave the OAuth fields blank, Add, then Connect. The URL is the credential:
 anyone with it can publish on the broker.
 
-## Rotating the secret
+## Sharing with someone else
 
-Set `secret` to a new value, restart this add-on, restart the NGINX SSL proxy
-add-on, then delete and re-add the connector in Claude. Clearing `secret` goes
-back to the generated one stored in the add-on's data.
+Add an entry to `shared_secrets` (`name: dzung`, `secret: <24+ random URL-safe
+characters>`), restart this add-on, then restart the NGINX SSL proxy add-on. Send
+them `https://<public_host>/<their secret>/mcp` over a private channel; they add
+it in their own Claude as a custom connector with the OAuth fields blank. To
+revoke, delete the entry and restart both add-ons.
+
+## Rotating a secret
+
+Change the value (`secret` for your own, or the entry in `shared_secrets`),
+restart this add-on, restart the NGINX SSL proxy add-on, then delete and re-add
+the affected connector in Claude. Clearing `secret` goes back to the generated
+one stored in the add-on's data.
