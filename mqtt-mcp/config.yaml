@@ -1,0 +1,50 @@
+name: MQTT MCP
+version: "1.0.0"
+slug: mqtt_mcp
+description: MCP server for watching, publishing and inspecting the Mosquitto broker from Claude
+url: https://github.com/andi-christ/ha-addons/tree/main/mqtt-mcp
+arch:
+  - amd64
+  - aarch64
+init: false
+startup: application
+boot: auto
+# Supervisor API: the mqtt service (broker host and login) and the Mosquitto
+# add-on log. manager is needed for /addons/<slug>/logs.
+hassio_api: true
+hassio_role: manager
+services:
+  - mqtt:need
+# The Let's Encrypt certificate lives in /ssl.
+map:
+  - ssl:ro
+ports:
+  8087/tcp: 8087
+ports_description:
+  8087/tcp: MCP endpoint (HTTPS when ssl is on)
+options:
+  secret: ""
+  ssl: true
+  certfile: fullchain.pem
+  keyfile: privkey.pem
+  public_host: mqtt.faikin.au
+  mqtt_host: ""
+  mqtt_port: 0
+  mqtt_user: ""
+  mqtt_password: ""
+  max_window_seconds: 60
+  max_messages: 500
+  payload_limit: 2000
+schema:
+  secret: str?
+  ssl: bool
+  certfile: str
+  keyfile: str
+  public_host: str?
+  mqtt_host: str?
+  mqtt_port: int?
+  mqtt_user: str?
+  mqtt_password: password?
+  max_window_seconds: int(5,300)?
+  max_messages: int(10,5000)?
+  payload_limit: int(100,20000)?
