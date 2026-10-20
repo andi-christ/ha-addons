@@ -6,6 +6,8 @@ url: https://github.com/andi-christ/ha-addons/tree/main/mqtt-mcp
 arch:
   - amd64
   - aarch64
+# Prebuilt by .github/workflows/build.yaml; the Supervisor pulls image:version.
+image: ghcr.io/andi-christ/mqtt-mcp-{arch}
 init: false
 startup: application
 boot: auto

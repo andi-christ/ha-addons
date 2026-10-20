@@ -1,0 +1,43 @@
+# Build the add-on images and push them to GHCR so the Supervisor only has to
+# pull (building on the e2-small debug server failed). Runs on every push that
+# touches an add-on; the tag is the version in the add-on's config.yaml.
+name: Build add-ons
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mqtt-mcp/**"
+      - ".github/workflows/build.yaml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        addon: [mqtt-mcp]
+        arch: [amd64, aarch64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: home-assistant/builder@master
+        with:
+          args: |
+            --${{ matrix.arch }} \
+            --target ${{ matrix.addon }} \
+            --image "${{ matrix.addon }}-{arch}" \
+            --docker-hub "ghcr.io/${{ github.repository_owner }}" \
+            --addon
